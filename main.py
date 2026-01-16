@@ -30,25 +30,35 @@ def encode_domain_name(domain_name: str) -> bytes:
     encoded_domain_name += b"\x00"
     return encoded_domain_name
 
+def build_dns_packet(domain_name):
+    packet_id = random.randint(0, 65_535)
+    print(packet_id)
+
+    dns_header = struct.pack("!HHHHHH", 
+    packet_id,
+    0x0100, # flags: QR, OPCODE, AA, TC, RD, RA, Z, RCODE all packed together
+    1,
+    0,
+    0,
+    0
+    )
+
+    dns_question = encode_domain_name(domain_name) + struct.pack("!HH", 1, 1)
+
+    return dns_header + dns_question
 
 
 if __name__ == "__main__":
 
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
 
-        packet_id = random.randint(0, 65_535)
-
-        dns_header = struct.pack("!HHHHHH", 
-        packet_id,
-        0x0100, # flags: QR, OPCODE, AA, TC, RD, RA, Z, RCODE all packed together
-        1,
-        0,
-        0,
-        0
-        )
-
-        dns_question = encode_domain_name("google.com") + struct.pack("!HH", 1, 1)
-
-        sock.sendto(dns_header + dns_question, ("8.8.8.8", 53))
+        
+        dns_packet = build_dns_packet("google.com")
+        sock.sendto(dns_packet, ("8.8.8.8", 53))
         response = sock.recv(1024)
+
+
+        dns_header = struct.unpack("!HHHHHH", response[:12])
+
         print(response)
+        print(dns_header)
