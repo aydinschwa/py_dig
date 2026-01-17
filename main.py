@@ -1,8 +1,8 @@
 import random
 import socket
 import struct
-
-
+from dataclasses import dataclass
+from enum import Enum
 
 # DNS packets are sent using UDP transport and are limited to 512 bytes
 
@@ -20,6 +20,144 @@ import struct
 # ANCOUNT	Answer Count	16 bits	The number of entries in the Answer Section
 # NSCOUNT	Authority Count	16 bits	The number of entries in the Authority Section
 # ARCOUNT	Additional Count	16 bits	The number of entries in the Additional Section
+
+@dataclass
+class DnsHeader():
+    packet_id: int
+    flags: int
+    qcount: int
+    acount: int
+    authcount: int
+    addcount: int
+    opcode: int
+    rcode: int
+
+@dataclass
+class DnsQuestion():
+    domain_name: str
+    record_type: int
+    record_class: int
+
+@dataclass
+class DnsRecord():
+    domain_name: str
+    record_type: int
+    record_class: int
+    ttl: int 
+    ip_address: str # only applicable for A records
+
+class ResultCode(Enum):
+    NOERROR = 0
+    FORMERR = 1
+    SERVFAIL = 2
+    NXDOMAIN = 3
+    NOTIMP = 4
+    REFUSED = 5
+
+    def __str__(self):
+        return self.name
+            
+class RecordType(Enum):
+    A = 1
+    CNAME = 5
+
+    def __str__(self):
+        return self.name
+
+
+
+
+class DnsPacket():
+    def __init__(self, buffer):
+        if len(buffer) > 512:
+            raise Exception(f"Invalid length for DNS packet: {len(buffer)}")
+        self.buffer = buffer
+        self.pos = 12 # start at the tip of the dns header
+
+        # parse DNS header
+        packet_id, flags, qcount, acount, authcount, addcount = struct.unpack("!HHHHHH", self.buffer[:self.pos])
+        # grab the info I care about from the flags
+        opcode = (flags >> 11) & 0x0F
+        rcode = flags & 0x0F
+
+        self.header = DnsHeader(packet_id, flags, qcount, acount, authcount, addcount, opcode, rcode)
+
+        # parse DNS question
+        self.questions = []
+        for _ in range(qcount):
+            domain_name, self.pos = self.extract_domain_name(self.pos)
+
+            record_type, record_class = struct.unpack("!HH", self.buffer[self.pos: self.pos + 4])
+            self.pos += 4
+
+            self.questions.append(DnsQuestion(domain_name, record_type, record_class))
+
+        # parse DNS answer
+        self.answers = []
+        for _ in range(acount):
+            domain_name, self.pos = self.extract_domain_name(self.pos)
+            record_type, record_class = struct.unpack("!HH", self.buffer[self.pos: self.pos + 4])
+            self.pos +=4 
+
+            ttl, = struct.unpack("!I", self.buffer[self.pos:self.pos + 4])
+            self.pos += 4
+
+            record_length, = struct.unpack("!H", self.buffer[self.pos:self.pos+2])
+            self.pos += 2
+
+            ip_bytes = self.buffer[self.pos:self.pos + record_length]
+            self.pos += record_length
+
+            ip_address = ".".join(str(b) for b in ip_bytes)
+            self.answers.append(DnsRecord(domain_name, record_type, record_class, ttl, ip_address))
+
+    def extract_domain_name(self, pos):
+        words = []
+        jumped = False
+        original_pos = pos
+        
+        while True:
+            length = self.buffer[pos]
+            
+            # Check if this is a compression pointer (top 2 bits set)
+            if length & 0xC0 == 0xC0:
+                # Calculate offset from the two bytes
+                offset = ((length & 0x3F) << 8) | self.buffer[pos + 1]
+                if not jumped:
+                    original_pos = pos + 2  # Save where to continue after
+                pos = offset
+                jumped = True
+                continue
+            
+            if length == 0:
+                break
+                
+            pos += 1
+            word = self.buffer[pos:pos + length].decode()
+            words.append(word)
+            pos += length
+        
+        # Return position after the name (or after the pointer if we jumped)
+        end_pos = original_pos if jumped else pos + 1
+        return ".".join(words), end_pos
+
+    def __repr__(self):
+        for q, a in zip(self.questions, self.answers):
+
+            print(f"<<>> AyDiG 1.0.0 <<>> {q.domain_name}")
+            print("Got answer:")
+            print(f"->>HEADER<<- opcode: {self.header.opcode}, status: {ResultCode(self.header.rcode)}, id: {self.header.packet_id}")
+            print(f"flags: qr rd ra; QUERY: {self.header.qcount}, ANSWER: {self.header.acount}, AUTHORITY: {self.header.authcount}, ADDITIONAL: {self.header.addcount}")
+
+            print("QUESTION SECTION:")
+            print(f"{q.domain_name}, IN, {RecordType(q.record_type)}")
+
+            print("ANSWER SECTION:")
+            print(f"{a.domain_name}, {a.ttl}, IN, {RecordType(a.record_type)}, {a.ip_address}")
+            return ""
+
+
+
 
 def encode_domain_name(domain_name: str) -> bytes:
     encoded_domain_name = b""
@@ -46,70 +184,13 @@ def build_dns_packet(domain_name):
     return dns_header + dns_question
 
 
-def extract_domain_name(packet, pos):
-    words = []
-    jumped = False
-    original_pos = pos
-    
-    while True:
-        length = packet[pos]
-        
-        # Check if this is a compression pointer (top 2 bits set)
-        if length & 0xC0 == 0xC0:
-            # Calculate offset from the two bytes
-            offset = ((length & 0x3F) << 8) | packet[pos + 1]
-            if not jumped:
-                original_pos = pos + 2  # Save where to continue after
-            pos = offset
-            jumped = True
-            continue
-        
-        if length == 0:
-            break
-            
-        pos += 1
-        word = packet[pos:pos + length].decode()
-        words.append(word)
-        pos += length
-    
-    # Return position after the name (or after the pointer if we jumped)
-    end_pos = original_pos if jumped else pos + 1
-    return ".".join(words), end_pos
-
-def parse_dns_packet(dns_packet):
-
-    # parse DNS header
-    dns_header = dns_packet[:12]
-    packet_id, flags, qcount, acount, authcount, addcount = struct.unpack("!HHHHHH", dns_header)
-
-    # parse DNS question
-    domain_name, pos = extract_domain_name(dns_packet, 12)
-
-    record_type, record_class = struct.unpack("!HH", dns_packet[pos: pos + 4])
-    pos += 4
-
-    # parse DNS answer
-    domain_name, pos = extract_domain_name(dns_packet, pos)
-    record_type, record_class = struct.unpack("!HH", dns_packet[pos: pos + 4])
-    pos +=4 
-
-    record_ttl, = struct.unpack("!I", dns_packet[pos:pos + 4])
-    pos += 4
-
-    record_length, = struct.unpack("!H", dns_packet[pos:pos+2])
-    pos += 2
-
-    ip_bytes = dns_packet[pos:pos + record_length]
-    ip_address = ".".join(str(b) for b in ip_bytes)
-    print(f"Domain {domain_name} has IP address {ip_address}")
-
-
 if __name__ == "__main__":
 
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
 
         
-        dns_packet = build_dns_packet("google.com")
+        dns_packet = build_dns_packet("asap-static.site")
         sock.sendto(dns_packet, ("8.8.8.8", 53))
         response = sock.recv(512)
-        parse_dns_packet(response)
+        packet = DnsPacket(response)
+        print(packet)
