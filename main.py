@@ -142,18 +142,18 @@ class DnsPacket():
         return ".".join(words), end_pos
 
     def __repr__(self):
+
         for q, a in zip(self.questions, self.answers):
-
-            print(f"<<>> AyDiG 1.0.0 <<>> {q.domain_name}")
-            print("Got answer:")
-            print(f"->>HEADER<<- opcode: {self.header.opcode}, status: {ResultCode(self.header.rcode)}, id: {self.header.packet_id}")
-            print(f"flags: qr rd ra; QUERY: {self.header.qcount}, ANSWER: {self.header.acount}, AUTHORITY: {self.header.authcount}, ADDITIONAL: {self.header.addcount}")
-
-            print("QUESTION SECTION:")
-            print(f"{q.domain_name}, IN, {RecordType(q.record_type)}")
-
-            print("ANSWER SECTION:")
-            print(f"{a.domain_name}, {a.ttl}, IN, {RecordType(a.record_type)}, {a.ip_address}")
+            print(f"; <<>> AyDiG 1.0.0 <<>> {q.domain_name}")
+            print(";; Got answer:")
+            print(f";; ->>HEADER<<- opcode: {self.header.opcode}, status: {ResultCode(self.header.rcode)}, id: {self.header.packet_id}")
+            print(f";; flags: qr rd ra; QUERY: {self.header.qcount}, ANSWER: {self.header.acount}, AUTHORITY: {self.header.authcount}, ADDITIONAL: {self.header.addcount}")
+            print()
+            print(";; QUESTION SECTION:")
+            print(f";{q.domain_name}.\t\t\tIN\t{RecordType(q.record_type)}")
+            print()
+            print(";; ANSWER SECTION:")
+            print(f"{a.domain_name}.\t\t{a.ttl}\tIN\t{RecordType(a.record_type)}\t{a.ip_address}")
             return ""
 
 
