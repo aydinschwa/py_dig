@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+from enum import Enum
 import struct
 
 class BytePacketBuffer:
@@ -112,3 +114,52 @@ class BytePacketBuffer:
                 self.seek(pos)
         
         return outstr
+
+
+
+class ResultCode(Enum):
+    NOERROR = 0
+    FORMERR = 1
+    SERVFAIL = 2
+    NXDOMAIN = 3
+    NOTIMP = 4
+    REFUSED = 5
+
+    def from_num(self, num):
+        match num:
+            case 1:
+                return self.FORMERR
+            case 2:
+                return self.SERVFAIL
+            case 3:
+                return self.NXDOMAIN
+            case 4:
+                return self.NOTIMP 
+            case 5:
+                return self.REFUSED
+            case 0:
+                return self.NOERROR
+            
+
+@dataclass
+class DnsHeader():
+
+    id: int # 16 bits
+    recursion_desired: bool # 1 bit
+    truncated_message: bool # 1 bit
+    authoritative_answer: bool # 1 bit
+    opcode: int # 4 bits
+    response: bool # 1 bit
+
+    rescode: ResultCode # 4 bits
+    checking_disabled: bool
+    authed_data: bool
+    z: bool
+    recursion_available: bool
+
+    questions: int # 16 bits
+    answers: int # 16 bits
+    authoritative_entries: int # 16 bits
+    resource_entries: int # 16 bits
+
+

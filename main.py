@@ -32,20 +32,76 @@ def encode_domain_name(domain_name: str) -> bytes:
 
 def build_dns_packet(domain_name):
     packet_id = random.randint(0, 65_535)
-    print(packet_id)
-
     dns_header = struct.pack("!HHHHHH", 
     packet_id,
     0x0100, # flags: QR, OPCODE, AA, TC, RD, RA, Z, RCODE all packed together
-    1,
-    0,
-    0,
-    0
+    1, # Question count
+    0, # Answer count
+    0, # Authority count
+    0 # Additional count
     )
 
     dns_question = encode_domain_name(domain_name) + struct.pack("!HH", 1, 1)
 
     return dns_header + dns_question
+
+
+def extract_domain_name(packet, pos):
+    words = []
+    jumped = False
+    original_pos = pos
+    
+    while True:
+        length = packet[pos]
+        
+        # Check if this is a compression pointer (top 2 bits set)
+        if length & 0xC0 == 0xC0:
+            # Calculate offset from the two bytes
+            offset = ((length & 0x3F) << 8) | packet[pos + 1]
+            if not jumped:
+                original_pos = pos + 2  # Save where to continue after
+            pos = offset
+            jumped = True
+            continue
+        
+        if length == 0:
+            break
+            
+        pos += 1
+        word = packet[pos:pos + length].decode()
+        words.append(word)
+        pos += length
+    
+    # Return position after the name (or after the pointer if we jumped)
+    end_pos = original_pos if jumped else pos + 1
+    return ".".join(words), end_pos
+
+def parse_dns_packet(dns_packet):
+
+    # parse DNS header
+    dns_header = dns_packet[:12]
+    packet_id, flags, qcount, acount, authcount, addcount = struct.unpack("!HHHHHH", dns_header)
+
+    # parse DNS question
+    domain_name, pos = extract_domain_name(dns_packet, 12)
+
+    record_type, record_class = struct.unpack("!HH", dns_packet[pos: pos + 4])
+    pos += 4
+
+    # parse DNS answer
+    domain_name, pos = extract_domain_name(dns_packet, pos)
+    record_type, record_class = struct.unpack("!HH", dns_packet[pos: pos + 4])
+    pos +=4 
+
+    record_ttl, = struct.unpack("!I", dns_packet[pos:pos + 4])
+    pos += 4
+
+    record_length, = struct.unpack("!H", dns_packet[pos:pos+2])
+    pos += 2
+
+    ip_bytes = dns_packet[pos:pos + record_length]
+    ip_address = ".".join(str(b) for b in ip_bytes)
+    print(f"Domain {domain_name} has IP address {ip_address}")
 
 
 if __name__ == "__main__":
@@ -55,10 +111,5 @@ if __name__ == "__main__":
         
         dns_packet = build_dns_packet("google.com")
         sock.sendto(dns_packet, ("8.8.8.8", 53))
-        response = sock.recv(1024)
-
-
-        dns_header = struct.unpack("!HHHHHH", response[:12])
-
-        print(response)
-        print(dns_header)
+        response = sock.recv(512)
+        parse_dns_packet(response)
